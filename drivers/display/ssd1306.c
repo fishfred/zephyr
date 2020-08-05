@@ -53,27 +53,45 @@ struct ssd1306_data {
 	uint8_t scan_mode;
 };
 
+struct ssd1306_config {
+	uint8_t reg_addr;
+	uint8_t prechargep;
+	uint8_t seg_offset;
+	uint8_t page_offset;
+	uint8_t display_offset;
+	uint8_t multiplex_radio;
+	uint8_t width;
+	uint8_t height;
+	uint8_t reset_gpios;
+	uint8_t segment_remap;
+	uint8_t com_invdir;
+	uint8_t com_sequential;
+
+	uint8_t number_of_pages;
+	char *bus_label;
+};
+
 static inline int ssd1306_reg_read(struct ssd1306_data *driver,
-				   uint8_t reg, uint8_t * const val)
+				   struct ssd1306_config *config, uint8_t reg, uint8_t * const val)
 {
 	return i2c_reg_read_byte(driver->i2c,
-				 DT_INST_REG_ADDR(0),
+				 config->reg_addr,
 				 reg, val);
 }
 
 static inline int ssd1306_reg_write(struct ssd1306_data *driver,
-				    uint8_t reg, uint8_t val)
+				    struct ssd1306_config *config, uint8_t reg, uint8_t val)
 {
 	return i2c_reg_write_byte(driver->i2c,
-				  DT_INST_REG_ADDR(0),
+				  config->reg_addr,
 				  reg, val);
 }
 
 static inline int ssd1306_reg_update(struct ssd1306_data *driver, uint8_t reg,
-				     uint8_t mask, uint8_t val)
+				    struct ssd1306_config *config, uint8_t mask, uint8_t val)
 {
 	return i2c_reg_update_byte(driver->i2c,
-				   DT_INST_REG_ADDR(0),
+				   config->reg_addr,
 				   reg, mask, val);
 }
 
@@ -120,13 +138,14 @@ static inline int ssd1306_set_timing_setting(struct device *dev)
 static inline int ssd1306_set_hardware_config(struct device *dev)
 {
 	struct ssd1306_data *driver = dev->driver_data;
+	struct ssd1306_config *config = dev->config_info;
 	uint8_t cmd_buf[] = {
 		SSD1306_CONTROL_BYTE_CMD,
 		SSD1306_SET_START_LINE,
 		SSD1306_CONTROL_BYTE_CMD,
 		SSD1306_SET_DISPLAY_OFFSET,
 		SSD1306_CONTROL_BYTE_CMD,
-		DT_INST_PROP(0, display_offset),
+		config->display_offset,
 		SSD1306_CONTROL_BYTE_CMD,
 		SSD1306_SET_PADS_HW_CONFIG,
 		SSD1306_CONTROL_BYTE_CMD,
@@ -134,7 +153,7 @@ static inline int ssd1306_set_hardware_config(struct device *dev)
 		SSD1306_CONTROL_BYTE_CMD,
 		SSD1306_SET_MULTIPLEX_RATIO,
 		SSD1306_CONTROL_LAST_BYTE_CMD,
-		DT_INST_PROP(0, multiplex_ratio)
+		config->multiplex_radio
 	};
 
 	return i2c_write(driver->i2c, cmd_buf, sizeof(cmd_buf),
@@ -324,9 +343,11 @@ static int ssd1306_set_contrast(const struct device *dev, const uint8_t contrast
 static void ssd1306_get_capabilities(const struct device *dev,
 				     struct display_capabilities *caps)
 {
+	const struct ssd1306_config *config = dev->config_info;
+
 	memset(caps, 0, sizeof(struct display_capabilities));
-	caps->x_resolution = DT_INST_PROP(0, width);
-	caps->y_resolution = DT_INST_PROP(0, height);
+	caps->x_resolution = config->width;
+	caps->y_resolution = config->height;
 	caps->supported_pixel_formats = PIXEL_FORMAT_MONO10;
 	caps->current_pixel_format = PIXEL_FORMAT_MONO10;
 	caps->screen_info = SCREEN_INFO_MONO_VTILED;
@@ -416,10 +437,11 @@ static int ssd1306_init(struct device *dev)
 
 	LOG_DBG("");
 
-	driver->i2c = device_get_binding(DT_INST_BUS_LABEL(0));
+	const struct ssd1306_config *config = dev->config_info;
+	driver->i2c = device_get_binding(config->bus_label);
 	if (driver->i2c == NULL) {
 		LOG_ERR("Failed to get pointer to %s device!",
-			    DT_INST_BUS_LABEL(0));
+			    config->bus_label);
 		return -EINVAL;
 	}
 
@@ -446,8 +468,6 @@ static int ssd1306_init(struct device *dev)
 	return 0;
 }
 
-static struct ssd1306_data ssd1306_driver;
-
 static struct display_driver_api ssd1306_driver_api = {
 	.blanking_on = ssd1306_suspend,
 	.blanking_off = ssd1306_resume,
@@ -461,7 +481,29 @@ static struct display_driver_api ssd1306_driver_api = {
 	.set_orientation = ssd1306_set_orientation,
 };
 
-DEVICE_AND_API_INIT(ssd1306, DT_INST_LABEL(0), ssd1306_init,
-		    &ssd1306_driver, NULL,
-		    POST_KERNEL, CONFIG_APPLICATION_INIT_PRIORITY,
-		    &ssd1306_driver_api);
+#define CREATE_SSD1306(inst) \
+	static struct ssd1306_data ssd1306_data_##inst; 									\
+			\
+	static const struct ssd1306_config ssd1306_config_##inst = { \
+		.reg_addr = DT_INST_REG_ADDR(inst),			\
+		.prechargep = DT_INST_PROP(inst, prechargep), \
+		.seg_offset = DT_INST_PROP(inst, segment_offset), \
+		.page_offset = DT_INST_PROP(inst, page_offset), \
+		.display_offset = DT_INST_PROP(inst, display_offset), \
+		.multiplex_radio =	DT_INST_PROP(inst, multiplex_radio), \
+		.width = DT_INST_PROP(inst, width), \
+		.height = DT_INST_PROP(inst, height), \
+		.bus_label = DT_INST_BUS_LABEL(inst),				 			\
+		.segment_remap = DT_INST_PROP(inst, segment_remap), \
+		.com_invdir = DT_INST_PROP(inst, com_invdir), \
+		.com_sequential = DT_INST_PROP(inst, com_sequential), \
+		.number_of_pages = DT_INST_PROP(inst, number_of_pages), \
+	};																	\
+				\
+	DEVICE_AND_API_INIT(ssd1306_##inst, DT_INST_LABEL(inst), ssd1306_init, 	\
+				&ssd1306_data_##inst, &ssd1306_config_##inst,		 	\
+				POST_KERNEL, CONFIG_APPLICATION_INIT_PRIORITY,   		\
+				&ssd1306_driver_api);
+
+
+DT_INST_FOREACH_STATUS_OKAY(CREATE_SSD1306)
